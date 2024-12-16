@@ -1,200 +1,131 @@
-# import sympy as sp
-# class chatbot:
-#     def __init__(self,name="ElectroBot"):
-#         self.name=name
-#         self.intro_message()
-
-#     def intro_message(self):
-#         print(f"Hi!I am {self.name},your electrical engineering assistant. Let's chat and solve problem together")
-#     def respond(self,user_input):
-#         if "ohms" in user_input.lower():
-#             return self.ohms_law_help()
-#         elif "power" in user_input.lower():
-#             return self.power_calculation_help()
-#         elif "inductance" in user_input.lower():
-#             return self.inductance_formula_help()
-#         elif "help" in user_input.lower():
-#             return self.show_help()
-#         else:
-#             return "I am your personal chat bot and I am here to help you solve basic electrical engineering problems."
-#     def ohms_law_help(self):
-#         print("Ohm's Law: V = I * R (Voltage = Current × Resistance)")
-#         V = input("Enter Voltage (V) or press Enter if unknown: ")
-#         I = input("Enter Current (I) or press Enter if unknown: ")
-#         R = input("Enter Resistance (R) or press Enter if unknown: ")
-
-#         # Solve for missing value
-#         try:
-#             if V == "":
-#                 V = float(I) * float(R)
-#                 return f"Calculated Voltage (V) is: {V} volts."
-#             elif I == "":
-#                 I = float(V) / float(R)
-#                 return f"Calculated Current (I) is: {I} amperes."
-#             elif R == "":
-#                 R = float(V) / float(I)
-#                 return f"Calculated Resistance (R) is: {R} ohms."
-#             else:
-#                 return "All values are provided. No calculation needed."
-#         except ValueError:
-#             return "Please enter valid numerical values."
-
-#     def power_calculation_help(self):
-#         print("Power Calculation: P = V * I (Power = Voltage × Current)")
-#         V = input("Enter Voltage (V): ")
-#         I = input("Enter Current (I): ")
-        
-#         try:
-#             P = float(V) * float(I)
-#             return f"Calculated Power (P) is: {P} watts."
-#         except ValueError:
-#             return "Please enter valid numerical values."
-
-#     def show_help(self):
-#         return """
-#         Here are some things I can help with:
-#         - Ohm's Law calculations
-#         - Power calculations
-#         - Inductance formula guidance
-#         Type a related question to get started!
-#         """
-
-# # Start the chatbot
-# def main():
-#     bot = chatbot()
-#     print("Type 'exit' to end the chat And type article to search for articles")
-#     while True:
-#         user_input = input("You: ")
-#         if user_input.lower() == "exit":
-#             print(f"{bot.name}: Goodbye! Have a great day!")
-#             break
-#         response = bot.respond(user_input)
-#         print(f"{bot.name}: {response}")
-
-# if __name__ == "__main__":
-#     main()
-
-# from sentence_transformers import SentenceTransformer, util
-
-# # Initialize the SentenceTransformer model
-# model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# # Sample articles
-# sample_articles = [
-#     "Ohm's Law states that Voltage equals Current times Resistance.",
-#     "Inductance measures the property of an electrical conductor to induce an electromotive force.",
-#     "Transformer cores are made of ferromagnetic materials for better efficiency."
-# ]
-
-# def find_relevant_article(query, articles):
-#     # Encode the query and articles
-#     query_embedding = model.encode(query, convert_to_tensor=True)
-#     article_embeddings = model.encode(articles, convert_to_tensor=True)
-    
-#     # Compute cosine similarities
-#     similarities = util.cos_sim(query_embedding, article_embeddings)
-    
-#     # Find the index of the most similar article
-#     best_match_index = similarities.argmax().item()
-#     return articles[best_match_index]
-
-# # Main program
-# def main():
-#     print("Welcome to the PyTorch Article Finder!")
-#     query = input("Enter your query: ")
-#     best_article = find_relevant_article(query, sample_articles)
-#     print("\n=== Most Relevant Article ===\n")
-#     print(best_article)
-
-# if __name__ == "__main__":
-#     main()
-
 import requests
+import re
+import fitz  # PyMuPDF
 from sentence_transformers import SentenceTransformer, util
 from transformers import T5Tokenizer, T5ForConditionalGeneration
+import os
 
-# Initialize the SentenceTransformer model
-# model = SentenceTransformer('all-MiniLM-L6-v2')
-model_name = "t5-small"  # You can also try "t5-base" or "t5-large" for better quality
-tokenizer = T5Tokenizer.from_pretrained(model_name)
-model = T5ForConditionalGeneration.from_pretrained(model_name)
+# Initialize models
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+t5_model_name = "t5-small"
+t5_tokenizer = T5Tokenizer.from_pretrained(t5_model_name)
+t5_model = T5ForConditionalGeneration.from_pretrained(t5_model_name)
 
-
-# IEEE Xplore API configuration
-API_KEY = "55anpjues3nqsee5jgjaycwq"
-API_URL = "http://ieeexploreapi.ieee.org/api/v1/search/articles"
-
-# Function to fetch articles from IEEE Xplore
-def fetch_ieee_articles(query, max_results=10):
-    params = {
-        "apikey": API_KEY,
-        "querytext": query,
-        "format": "json",
-        "max_records": max_results
-    }
-    response = requests.get(API_URL, params=params)
-
+# Fetch articles from arXiv
+def fetch_arxiv_articles(query, max_results=10):
+    url = f'http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={max_results}'
+    response = requests.get(url)
+    
     if response.status_code == 200:
-        data = response.json()
-        articles = [
-            {"title": article.get("title", "No title"), "abstract": article.get("abstract", "No abstract available")}
-            for article in data.get("articles", [])
-        ]
+        data = response.content.decode('utf-8')
+        articles = []
+        for entry in data.split('<entry>')[1:]:  # Extract each article entry
+            title_start = entry.find('<title>') + len('<title>')
+            title_end = entry.find('</title>')
+            title = entry[title_start:title_end].strip()
+            
+            summary_start = entry.find('<summary>') + len('<summary>')
+            summary_end = entry.find('</summary>')
+            summary = entry[summary_start:summary_end].strip()
+            
+            pdf_url_start = entry.find('<link title="pdf" href="') + len('<link title="pdf" href="')
+            pdf_url_end = entry.find('"', pdf_url_start)
+            pdf_url = entry[pdf_url_start:pdf_url_end]
+            
+            articles.append({"title": title, "summary": summary, "pdf_url": pdf_url})
         return articles
     else:
-        print(f"Failed to fetch data. HTTP Status Code: {response.status_code}")
+        print("Failed to fetch data from arXiv.")
         return []
 
-# Function to process articles and find solutions
+# Download and extract text from PDF
+def download_and_extract_pdf(pdf_url):
+    try:
+        response = requests.get(pdf_url, stream=True)
+        if response.status_code == 200:
+            local_path = "temp.pdf"
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            
+            text = extract_text_from_pdf(local_path)
+            os.remove(local_path)  # Clean up the temporary file
+            return text
+        else:
+            print(f"Failed to download PDF from {pdf_url}.")
+            return None
+    except Exception as e:
+        print(f"Error downloading or extracting PDF: {e}")
+        return None
+
+# Clean text by removing unnecessary spaces, URLs, and patterns
+def clean_text(text):
+    text = " ".join(text.split())
+    lines = text.split('\n')
+    filtered_lines = [line for line in lines if not line.startswith("Page") and not line.startswith("http")]
+    return " ".join(filtered_lines)
+
+# Extract text from a local PDF
+def extract_text_from_pdf(pdf_url):
+    try:
+        doc = fitz.open(pdf_url)
+        text = ""
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            page_text = page.get_text()
+            text += page_text
+
+        cleaned_text = clean_text(text)
+        return cleaned_text
+    except Exception as e:
+        print(f"Error extracting text from PDF: {e}")
+        return ""
+
+# Summarize article text using T5 model
+# Adjusted Summarize function with balanced length and better truncation handling
+def summarize_text_with_t5(text):
+    input_text = f"summarize: {text}"
+    inputs = t5_tokenizer.encode(input_text, return_tensors="pt", truncation=True, max_length=512)
+    summary_ids = t5_model.generate(inputs, max_length=200, min_length=80, length_penalty=1.5, num_beams=4, early_stopping=True)
+    summary = t5_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return summary
+
+# Generate solution by matching the query with the most relevant article
 def generate_solution(query, articles):
-    # Combine titles and abstracts for similarity matching
-    article_texts = [f"{a['title']} - {a['abstract']}" for a in articles]
-    
-    if not article_texts:
-        return "No relevant articles were found. Please try another query."
+    texts = [f"{a['title']} - {a['summary']}" for a in articles]
+    if not texts:
+        return "No relevant articles found."
 
-    # Encode the query and articles
-    query_embedding = model.encode(query, convert_to_tensor=True)
-    article_embeddings = model.encode(article_texts, convert_to_tensor=True)
-
-    # Compute cosine similarities
-    similarities = util.cos_sim(query_embedding, article_embeddings)
+    # Encode query and articles
+    query_embedding = sentence_model.encode(query, convert_to_tensor=True)
+    article_embeddings = sentence_model.encode(texts, convert_to_tensor=True)
 
     # Find the most relevant article
+    similarities = util.cos_sim(query_embedding, article_embeddings)
     best_match_index = similarities.argmax().item()
     best_article = articles[best_match_index]
 
-    # Generate a solution by summarizing and interpreting the best article
-    solution = f"Based on the article '{best_article['title']}', here’s what you can do:\n\n"
-    solution += summarize_abstract(best_article['abstract'])
-    return solution
+    # Download and process the PDF content
+    if "pdf_url" in best_article and best_article["pdf_url"]:
+        print(f"\nDownloading and extracting text from: {best_article['pdf_url']}")
+        full_text = download_and_extract_pdf(best_article["pdf_url"])
+    else:
+        full_text = best_article["summary"]
 
-def summarize_with_t5(text, max_length=50):
-    # Prepare the input
-    input_text = f"summarize: {text}"
-    inputs = tokenizer.encode(input_text, return_tensors="pt", truncation=True)
+    if not full_text:
+        return "Unable to retrieve the full text of the selected article."
 
-    # Generate the summary
-    summary_ids = model.generate(inputs, max_length=max_length, min_length=10, length_penalty=2.0, num_beams=4, early_stopping=True)
-    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-    return summary
+    # Summarize the full text of the article
+    summary = summarize_text_with_t5(full_text)
+    return f"Based on the article titled '{best_article['title']}', here’s what you can do:\n\n{summary}"
 
-# Function to summarize the abstract (mock function for now)
-def summarize_abstract(abstract):
-    try:
-        return summarize_with_t5(abstract)
-    except Exception as e:
-        return f"Error during summarization: {e}"
-
-
-# Main program
+# Main program to interact with the user and provide solutions
 def main():
     print("Welcome to the Intelligent Assistant!")
     query = input("Enter your query or problem statement: ")
     
-    print("\nFetching articles from IEEE Xplore...")
-    articles = fetch_ieee_articles(query)
-    
+    print("\nFetching articles from arXiv...")
+    articles = fetch_arxiv_articles(query)
+
     if not articles:
         print("No articles found for your query.")
         return
